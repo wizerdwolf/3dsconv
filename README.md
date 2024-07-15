@@ -1,3 +1,5 @@
+_Note: The `master` branch is only used for tracking the upstream package. It is recommended to use the `wizerd-dev` branch to get the changes developed in this fork before they are pulled into upstream._
+
 # 3dsconv
 `3dsconv.py` is a Python 3 script that converts Nintendo 3DS CTR Cart Image files (CCI, ".cci", ".3ds") to the CTR Importable Archive format (CIA).
 

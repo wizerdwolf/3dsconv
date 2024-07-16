@@ -113,7 +113,7 @@ def get_certchain_dev(path):
     # exit early if file doesn't exist
     if not os.path.isfile(path):
         return None
-    
+
     correct_hash = 'd5c3d811a7eb87340aa9f4ab1841b6c4'
     with open(path, 'rb') as f:
         certchain = f.read(0xA00)
@@ -255,6 +255,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+class RomInfo():
+    name = ""
+    input_fn = ""
+    output_fn = ""
+
+    def __init__(self, name, input_fn, output_fn):
+        self.name = name
+        self.input_fn = input_fn
+        self.output_fn = output_fn
+
+
 def main():
     '''Used to execute tool on the command line.
 
@@ -296,7 +307,7 @@ def main():
             error('Invalid or missing dev certchain. See README for details.')
             sys.exit(1)
 
-    files = []
+    rom_infos = []
     for arg in args.game:
         to_add = glob.glob(arg)
         if len(to_add) == 0:
@@ -313,7 +324,7 @@ def main():
                     )
                     continue
                 total_files += 1
-                files.append([input_file, rom_name, cia_name])
+                rom_infos.append(RomInfo(rom_name, input_file, cia_name))
 
     if args.use_deprecated:
         print(
@@ -358,20 +369,20 @@ def main():
     if not total_files:
         error('No files were given.')
         sys.exit(1)
-    if not files:
+    if not rom_infos:
         error('No inputted files exist.')
         sys.exit(1)
 
-    for rom_file in files:
-        with open(rom_file[0], 'rb') as rom:
-            print_v('----------\nProcessing {}...'.format(rom_file[0]))
+    for rom_info in rom_infos:
+        with open(rom_info.input_fn, 'rb') as rom:
+            print_v('----------\nProcessing {}...'.format(rom_info.input_fn))
             # check for NCSD magic
             # 3DS NAND dumps also have this
             rom.seek(0x100)
             ncsd_magic = rom.read(4)
             if ncsd_magic != b'NCSD':
                 error('"{}" is not a CCI file (missing NCSD magic).'.format(
-                    rom_file[0]
+                    rom_info.input_fn
                 ))
                 continue
 
@@ -407,7 +418,7 @@ def main():
             ncch_magic = rom.read(4)
             if ncch_magic != b'NCCH':
                 error('"{}" is not a CCI file (missing NCCH magic).'.format(
-                    rom_file[0]
+                    rom_info.input_fn
                 ))
                 continue
 
@@ -427,7 +438,7 @@ def main():
                         'the bootROM were not found, therefore this can not '
                         'be converted. See the README at '
                         'https://github.com/ihaveamac/3dsconv for details.'
-                        .format(rom_file[0])
+                        .format(rom_info.input_fn)
                     )
                     continue
                 else:
@@ -463,7 +474,7 @@ def main():
             elif encrypted:
                 encryption_status = 'encrypted'
 
-            print(f"Converting {rom_file[1]} ({encryption_status})...")
+            print(f"Converting {rom_info.name} ({encryption_status})...")
 
             # Game Executable fist-half ExtHeader
             print_v('\nVerifying ExtHeader...')
@@ -587,7 +598,7 @@ def main():
                 content_index += 0b00100000
 
             # CIA
-            with open(rom_file[2], 'wb') as cia:
+            with open(rom_info.output_fn, 'wb') as cia:
                 print_v('Writing CIA header...')
 
                 # 1st content: ID 0x, Index 0x0

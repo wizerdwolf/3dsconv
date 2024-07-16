@@ -70,7 +70,6 @@ ZEROKEY = bytes(0x10)
 
 
 # used from http://www.falatic.com/index.php/108/python-and-bitwise-rotation
-# converted to def because pycodestyle complained to me
 def rol(val, r_bits, max_bits):
     return (val << r_bits % max_bits) & (2 ** max_bits - 1) | \
         ((val & (2 ** max_bits - 1)) >> (max_bits - (r_bits % max_bits)))
@@ -79,44 +78,85 @@ def rol(val, r_bits, max_bits):
 def print_v(*msg, end='\n') -> None:
     '''Does nothing unless verbose mode is enabled
 
-    If verbose mode is enabled, see: _print_v()
+    If verbose mode is enabled, see: print()
     '''
 
     return
 
 
-def _print_v(*msg, end='\n') -> None:
-    '''See: print()'''
-    print(*msg, end=end)
-
-
 def v(msg):
     '''Does nothing unless verbose mode is enabled
 
-    If verbose mode is enabled, see: _v()
+    If verbose mode is enabled, returns msg
     '''
 
     return ''
 
-
-def _v(msg):
-    '''Returns the argument'''
-    return msg
-
-
-def _enable_verbose():
+def enable_verbose():
     '''Enables verbose mode functions'''
 
     global print_v
-    print_v = _print_v
+    print_v = print
 
     global v
-    v = _v
+    v = lambda msg: msg
 
 
 # error messages
 def error(*msg):
     print('Error:', *msg)
+
+
+def get_certchain_dev(path):
+    '''Returns the certchain at the specified path if it exists'''
+
+    # exit early if file doesn't exist
+    if not os.path.isfile(path):
+        return None
+    
+    correct_hash = 'd5c3d811a7eb87340aa9f4ab1841b6c4'
+    with open(path, 'rb') as f:
+        certchain = f.read(0xA00)
+
+    certchain_hash = hashlib.md5(certchain).hexdigest()
+
+    return certchain if certchain_hash == correct_hash else None
+
+
+def get_ncch_key(boot9_path, use_dev_keys=False) -> int:
+    '''Returns the ncch key at the specified boot9 path if it exists'''
+
+    print_v('... {}: '.format(boot9_path), end='')
+
+    # exit early if file doesn't exist
+    if not os.path.isfile(boot9_path):
+        print_v('File doesn\'t exist.')
+        return None
+
+    # finally, try to get the key
+    # How does file size correspond to offset?
+    boot9_file_size = os.path.getsize(boot9_path)
+    keys_offset = 0x8000 if boot9_file_size == 0x10000 else 0x400
+
+    # Should probably put hash values in globals
+    correct_hash = (
+        '49aa32c775608af6298ddc0fc6d18a7e'
+        if use_dev_keys else
+        'e35bf88330f4f1b2bb6fd5b870a679ca'
+    )
+
+    with open(boot9_path, 'rb') as f:
+        # get Original NCCH (slot 0x2C key X)
+        f.seek(0x59D0 + keys_offset)
+        key = f.read(0x10)
+
+    key_hash = hashlib.md5(key).hexdigest()
+    if key_hash == correct_hash:
+        print_v('Correct key found.')
+        return int.from_bytes(key, byteorder='big')
+
+    print_v('Corrupt file (invalid key).')
+    return None
 
 
 # show a progress bar
@@ -233,7 +273,7 @@ def main():
     args = parse_args()
 
     if args.verbose:
-        _enable_verbose()
+        enable_verbose()
 
     total_files = 0
     processed_files = 0
@@ -247,26 +287,12 @@ def main():
         )
         print('Looking for certchain-dev.bin...')
 
-        def check_path(path, certchain_dev=None):
-            if certchain_dev is None:
-                if os.path.isfile(path):
-                    with open(path, 'rb') as c:
-                        certchain = c.read(0xA00)
-                        correct_hash = 'd5c3d811a7eb87340aa9f4ab1841b6c4'
-                        if hashlib.md5(certchain).hexdigest() == correct_hash:
-                            return certchain
-                return None
-
-            else:
-                return certchain_dev
-
-        certchain_dev = check_path('certchain-dev.bin')
-        certchain_dev = check_path(
-            os.path.expanduser('~') + '/.3ds/certchain-dev.bin',
-            certchain_dev
+        certchain_dev = (
+            get_certchain_dev('certchain-dev.bin') or
+            get_certchain_dev(os.path.expanduser('~/.3ds/certchain-dev.bin'))
         )
 
-        if not certchain_dev:
+        if certchain_dev is None:
             error('Invalid or missing dev certchain. See README for details.')
             sys.exit(1)
 
@@ -302,54 +328,22 @@ def main():
     if pyaes_found:
         print_v('pyaes found, Searching for protected ARM9 bootROM')
 
-        def set_keys(boot9_file) -> int:
-            keys_offset = 0
-            if os.path.getsize(boot9_file) == 0x10000:
-                keys_offset += 0x8000
-            if args.dev_keys:
-                keys_offset += 0x400
-            with open(boot9_file, 'rb') as f:
-                # get Original NCCH (slot 0x2C key X)
-                f.seek(0x59D0 + keys_offset)
-                key = f.read(0x10)
-                key_hash = hashlib.md5(key).hexdigest()
-                correct_hash = (
-                    '49aa32c775608af6298ddc0fc6d18a7e'
-                    if args.dev_keys else
-                    'e35bf88330f4f1b2bb6fd5b870a679ca'
-                )
-                if key_hash == correct_hash:
-                    print_v('Correct key found.')
-                    return int.from_bytes(key, byteorder='big')
-
-                print_v('Corrupt file (invalid key).')
-                return None
-
-        def check_path(path, orig_ncch_key=None) -> int:
-            if orig_ncch_key is None:
-                print_v('... {}: '.format(path), end='')
-                if os.path.isfile(path):
-                    return set_keys(path)
-                else:
-                    print_v('File doesn\'t exist.')
-                    return None
-
-            else:
-                return orig_ncch_key
-
         # check supplied path by boot9_path or --boot9
         if args.boot9:
-            check_path(args.boot9)
-        orig_ncch_key = check_path('boot9.bin')
-        orig_ncch_key = check_path('boot9_prot.bin', orig_ncch_key)
+            orig_ncch_key = get_ncch_key(args.boot9, args.dev_keys)
 
-        orig_ncch_key = check_path(
-            os.path.expanduser('~') + '/.3ds/boot9.bin',
-            orig_ncch_key
-        )
-        orig_ncch_key = check_path(
-            os.path.expanduser('~') + '/.3ds/boot9_prot.bin',
-            orig_ncch_key
+        orig_ncch_key = (
+            orig_ncch_key or
+            get_ncch_key('boot9.bin', args.dev_keys) or
+            get_ncch_key('boot9_prot.bin', args.dev_keys) or
+            get_ncch_key(
+                os.path.expanduser('~.3ds/boot9.bin'),
+                args.dev_keys
+            ) or
+            get_ncch_key(
+                os.path.expanduser('~/.3ds/boot9_prot.bin'),
+                args.dev_keys
+            )
         )
 
         if orig_ncch_key is None:
